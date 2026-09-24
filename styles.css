@@ -1,0 +1,18 @@
+body.tw-col-resize, body.tw-col-resize * {
+  cursor: col-resize !important;
+}
+body.tw-dragging, body.tw-dragging * {
+  user-select: none !important;
+}
+.tw-measure, .tw-measure * {
+  white-space: nowrap !important;
+}
+/* Fixed layout lets unbreakable text (URLs, code) spill into the next column; break it instead. */
+table.tw-frozen {
+  table-layout: fixed;
+  max-width: none;
+}
+table.tw-frozen th, table.tw-frozen td {
+  overflow-wrap: anywhere;
+  overflow: hidden;
+}
