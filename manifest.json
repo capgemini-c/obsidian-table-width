@@ -1,7 +1,7 @@
 {
   "id": "table-width",
   "name": "Table Width",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAppVersion": "1.13.7",
   "description": "Resize Markdown table columns by dragging their borders, or double-click a border to fit a column to its text. Tables you haven't resized keep their normal layout.",
   "author": "Karolis Kalanta",

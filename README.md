@@ -7,7 +7,7 @@ Resize Markdown table columns in Obsidian without changing how the rest of the t
 - **Untouched tables stay as they are.** A table only switches to fixed column widths once you resize it.
 - Long unbreakable text (URLs, inline code) wraps inside narrowed columns instead of spilling into the next one.
 
-Works in Live Preview and Reading view. Widths are saved per note and table (keyed by the header row), follow note renames, and never modify the Markdown.
+Works in Live Preview and Reading view. Widths are saved per note and table (keyed by the header row) and never modify the Markdown.
 
 ## Commands
 

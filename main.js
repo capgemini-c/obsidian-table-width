@@ -2,31 +2,22 @@ const { Plugin, MarkdownView } = require('obsidian');
 
 const ZONE = 5; // px either side of a column border that counts as "on the border"
 const MIN = 40; // smallest column width, px
-const DOUBLE_MS = 400;
 
 const headerKey = (table) =>
-  Array.from(table.rows[0].cells, (c) => c.textContent.replace(/[\u200b\ufeff]/g, '').replace(/\s+/g, ' ').trim()).join('|');
+  Array.from(table.rows[0].cells, (c) => c.textContent.replace(/\s+/g, ' ').trim()).join('|');
 
 module.exports = class TableWidth extends Plugin {
   async onload() {
     this.data = Object.assign({ files: {} }, await this.loadData());
-    this.drag = null;
-    this.lastDown = null;
-    this.suppressClick = false;
 
     this.registerDomEvent(document, 'pointermove', (e) => this.onMove(e));
     this.registerDomEvent(document, 'pointerdown', (e) => this.onDown(e), { capture: true });
     this.registerDomEvent(document, 'pointerup', () => this.onUp());
     this.registerDomEvent(document, 'pointercancel', () => this.onUp());
-    // Keep Live Preview from entering cell editing when the border is clicked.
-    for (const type of ['mousedown', 'click', 'dblclick']) {
-      this.registerDomEvent(document, type, (e) => {
-        if (this.drag || (type === 'click' && this.suppressClick) || this.border(e)) {
-          this.suppressClick = false;
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }, { capture: true });
+    this.registerDomEvent(document, 'dblclick', (e) => this.onDouble(e), { capture: true });
+    // Keep Live Preview from entering cell editing when a border is clicked.
+    for (const type of ['mousedown', 'click']) {
+      this.registerDomEvent(document, type, (e) => this.swallow(e), { capture: true });
     }
 
     // Obsidian re-renders tables (scrolling, editing, mode switch); re-apply saved widths.
@@ -34,13 +25,6 @@ module.exports = class TableWidth extends Plugin {
     observer.observe(this.app.workspace.containerEl, { childList: true, subtree: true });
     this.register(() => observer.disconnect());
     this.app.workspace.onLayoutReady(() => this.restore());
-
-    this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
-      if (!this.data.files[oldPath]) return;
-      this.data.files[file.path] = this.data.files[oldPath];
-      delete this.data.files[oldPath];
-      this.saveData(this.data);
-    }));
 
     this.addCommand({
       id: 'reset-note',
@@ -71,20 +55,17 @@ module.exports = class TableWidth extends Plugin {
 
   // The column border under the pointer: { table, i } where i is the column left of the border.
   border(e) {
-    const cell = e.target instanceof Element && e.target.closest('th, td');
-    if (!cell) return null;
-    const table = cell.closest('table');
-    if (!table || !table.rows.length || !this.pathOf(table)) return null;
+    const cell = e.target.closest?.('th, td');
+    const table = cell && cell.closest('table');
+    if (!table || !this.pathOf(table)) return null;
     const r = cell.getBoundingClientRect();
-    const n = table.rows[0].cells.length;
-    let i = -1;
-    if (r.right - e.clientX <= ZONE) i = cell.cellIndex;
-    else if (e.clientX - r.left <= ZONE && cell.cellIndex > 0) i = cell.cellIndex - 1;
-    return i >= 0 && i < n ? { table, i } : null;
+    if (r.right - e.clientX <= ZONE) return { table, i: cell.cellIndex };
+    if (e.clientX - r.left <= ZONE && cell.cellIndex > 0) return { table, i: cell.cellIndex - 1 };
+    return null;
   }
 
-  measure(table) {
-    return Array.from(table.rows[0].cells, (c) => c.getBoundingClientRect().width);
+  widths(table) {
+    return table._tw ? table._tw.slice() : Array.from(table.rows[0].cells, (c) => c.getBoundingClientRect().width);
   }
 
   apply(table, cols) {
@@ -110,6 +91,13 @@ module.exports = class TableWidth extends Plugin {
     delete table._tw;
   }
 
+  swallow(e) {
+    if (this.suppressClick || this.border(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }
+
   onMove(e) {
     if (this.drag) return this.dragTo(e.clientX);
     document.body.classList.toggle('tw-col-resize', !!this.border(e));
@@ -117,21 +105,20 @@ module.exports = class TableWidth extends Plugin {
 
   onDown(e) {
     this.suppressClick = false;
-    if (e.button !== 0) return;
+    const b = e.button === 0 && this.border(e);
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.drag = { ...b, x: e.clientX, cols: this.widths(b.table), moved: false };
+    document.body.classList.add('tw-dragging');
+  }
+
+  onDouble(e) {
     const b = this.border(e);
     if (!b) return;
     e.preventDefault();
     e.stopPropagation();
-    const now = Date.now();
-    const last = this.lastDown;
-    this.lastDown = { table: b.table, i: b.i, t: now };
-    if (last && last.table === b.table && last.i === b.i && now - last.t < DOUBLE_MS) {
-      this.lastDown = null;
-      return this.fit(b.table, b.i);
-    }
-    const cols = b.table._tw ? b.table._tw.slice() : this.measure(b.table);
-    this.drag = { table: b.table, i: b.i, x: e.clientX, cols, moved: false };
-    document.body.classList.add('tw-dragging');
+    this.fit(b.table, b.i);
   }
 
   // Inner border: width moves between the two adjacent columns, table width unchanged.
@@ -166,43 +153,38 @@ module.exports = class TableWidth extends Plugin {
   // Fit column i to its longest unwrapped line, taking the space from the column to its right.
   // The table only grows when that neighbour is already at MIN (or i is the last column).
   fit(table, i) {
-    const cols = table._tw ? table._tw.slice() : this.measure(table);
-    const want = this.natural(table, i);
+    const cols = this.widths(table);
+    const want = Math.ceil(Math.max(MIN, ...Array.from(table.rows, (row) => this.lineWidth(row.cells[i]))));
     if (i + 1 < cols.length) cols[i + 1] = Math.max(MIN, cols[i + 1] - (want - cols[i]));
     cols[i] = want;
     this.apply(table, cols);
     this.save(table);
   }
 
-  natural(table, i) {
-    let w = MIN;
+  // Width of the cell's longest line with wrapping switched off, plus its padding.
+  lineWidth(cell) {
+    if (!cell) return 0;
+    cell.classList.add('tw-measure');
+    const rects = [];
     const range = document.createRange();
-    for (const row of table.rows) {
-      const cell = row.cells[i];
-      if (!cell) continue;
-      cell.classList.add('tw-measure');
-      const box = cell.getBoundingClientRect();
-      let left = Infinity;
-      let right = -Infinity;
-      const walk = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
-      for (let t = walk.nextNode(); t; t = walk.nextNode()) {
-        if (!t.textContent.trim()) continue;
-        range.selectNodeContents(t);
-        for (const q of range.getClientRects()) {
-          left = Math.min(left, q.left);
-          right = Math.max(right, q.right);
-        }
-      }
-      cell.classList.remove('tw-measure');
-      // Text starts after the cell's left padding; assume the same padding on the right.
-      if (right > left) w = Math.max(w, right - left + 2 * Math.max(0, left - box.left) + 1);
+    const walk = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+    while (walk.nextNode()) {
+      if (!walk.currentNode.textContent.trim()) continue;
+      range.selectNodeContents(walk.currentNode);
+      rects.push(...range.getClientRects());
     }
-    return Math.ceil(w);
+    const cellLeft = cell.getBoundingClientRect().left;
+    cell.classList.remove('tw-measure');
+    if (!rects.length) return 0;
+    const left = Math.min(...rects.map((q) => q.left));
+    const right = Math.max(...rects.map((q) => q.right));
+    // Text starts after the cell's left padding; assume the same padding on the right.
+    return right - left + 2 * Math.max(0, left - cellLeft) + 1;
   }
 
   save(table) {
     const path = this.pathOf(table);
-    if (!path || !table._tw) return;
+    if (!path) return;
     (this.data.files[path] = this.data.files[path] || {})[headerKey(table)] = table._tw;
     this.saveData(this.data);
   }
@@ -210,15 +192,18 @@ module.exports = class TableWidth extends Plugin {
   restore() {
     for (const leaf of this.app.workspace.getLeavesOfType('markdown')) {
       const saved = leaf.view.file && this.data.files[leaf.view.file.path];
-      if (!saved) continue;
-      for (const table of leaf.view.containerEl.querySelectorAll('table')) {
-        if (!table.rows.length || (this.drag && this.drag.table === table)) continue;
-        const cols = saved[headerKey(table)];
-        if (!cols || cols.length !== table.rows[0].cells.length) continue;
-        const intact = table._tw && table._tw.join() === cols.join() &&
-          table.classList.contains('tw-frozen') && table.querySelector(':scope > colgroup');
-        if (!intact) this.apply(table, cols);
-      }
+      if (saved) leaf.view.containerEl.querySelectorAll('table').forEach((t) => this.restoreTable(t, saved));
     }
+  }
+
+  restoreTable(table, saved) {
+    const cols = table.rows.length && saved[headerKey(table)];
+    if (!cols || cols.length !== table.rows[0].cells.length || this.drag?.table === table) return;
+    if (!this.intact(table, cols)) this.apply(table, cols);
+  }
+
+  intact(table, cols) {
+    return table._tw?.join() === cols.join() && table.classList.contains('tw-frozen') &&
+      !!table.querySelector(':scope > colgroup');
   }
 };
