@@ -1,11 +1,17 @@
-body.tw-col-resize, body.tw-col-resize * {
-  cursor: col-resize !important;
+/* Links and buttons read these variables; cells get an explicit rule that outranks Obsidian's. */
+body.tw-col-resize {
+  --cursor: col-resize;
+  --cursor-link: col-resize;
+  cursor: col-resize;
 }
-body.tw-dragging, body.tw-dragging * {
-  user-select: none !important;
+body.tw-col-resize .markdown-source-view.mod-cm6 :is(th, td),
+body.tw-col-resize .markdown-rendered :is(th, td) {
+  cursor: col-resize;
 }
-.tw-measure, .tw-measure * {
-  white-space: nowrap !important;
+/* Obsidian sets table cell wrapping through this variable. */
+.tw-measure {
+  --table-white-space: nowrap;
+  white-space: nowrap;
 }
 /* Fixed layout lets unbreakable text (URLs, code) spill into the next column; break it instead. */
 table.tw-frozen {

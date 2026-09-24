@@ -43,7 +43,7 @@ module.exports = class TableWidth extends Plugin {
 
   onunload() {
     document.querySelectorAll('table').forEach((t) => t._tw && this.unfreeze(t));
-    document.body.classList.remove('tw-col-resize', 'tw-dragging');
+    document.body.classList.remove('tw-col-resize');
   }
 
   pathOf(table) {
@@ -110,7 +110,6 @@ module.exports = class TableWidth extends Plugin {
     e.preventDefault();
     e.stopPropagation();
     this.drag = { ...b, x: e.clientX, cols: this.widths(b.table), moved: false };
-    document.body.classList.add('tw-dragging');
   }
 
   onDouble(e) {
@@ -143,7 +142,6 @@ module.exports = class TableWidth extends Plugin {
     if (!this.drag) return;
     const d = this.drag;
     this.drag = null;
-    document.body.classList.remove('tw-dragging');
     if (d.moved) {
       this.suppressClick = true;
       this.save(d.table);
